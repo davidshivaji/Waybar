@@ -3,6 +3,7 @@
 #include <gtkmm/main.h>
 #include <gtkmm/drawingarea.h>
 #include <glibmm/main.h>
+#include <gdkmm/general.h>
 #include <json/json.h>
 #include <sstream>
 #include <functional>
@@ -144,12 +145,16 @@ void PreviewWindow::setupWindow() {
   }
   m_window.set_app_paintable(true);
   
-  // Connect draw signal to manually paint rounded background
+  // Connect draw signal to manually paint with shadow, background, and border
   m_window.signal_draw().connect([this](const Cairo::RefPtr<Cairo::Context>& cr) {
     auto allocation = m_window.get_allocation();
     double width = allocation.get_width();
     double height = allocation.get_height();
-    double radius = 10.0;  // Match Hyprland's standard window rounding
+    double radius = 6.0;
+    double border_width = 2.0;
+    
+    // Shadow space - content is inset by this amount
+    double shadow_space = 3.0;
     
     // Clear the surface
     cr->save();
@@ -157,37 +162,76 @@ void PreviewWindow::setupWindow() {
     cr->paint();
     cr->restore();
     
+    cr->set_operator(Cairo::OPERATOR_OVER);
+    
+    // Content area (inset by shadow space)
+    double content_x = shadow_space;
+    double content_y = shadow_space;
+    double content_width = width - (shadow_space * 2);
+    double content_height = height - (shadow_space * 2);
+    
+    // Draw shadow using Gaussian-like blur
+    cr->save();
+    for (double i = 0; i < shadow_space; i += 0.3) {
+      double progress = i / shadow_space;
+      double alpha = 0.1 * (1.0 - progress * progress);  // Halved opacity
+      cr->set_source_rgba(0, 0, 0, alpha);
+      
+      double offset = shadow_space - i;
+      double x = content_x - offset;
+      double y = content_y - offset;  // No downward offset - keep shadow uniform
+      double w = content_width + (offset * 2);
+      double h = content_height + (offset * 2);
+      double r = radius + offset;
+      
+      // Draw rounded rect for this shadow layer
+      cr->arc(x + r, y + r, r, M_PI, 3 * M_PI / 2);
+      cr->arc(x + w - r, y + r, r, 3 * M_PI / 2, 2 * M_PI);
+      cr->arc(x + w - r, y + h - r, r, 0, M_PI / 2);
+      cr->arc(x + r, y + h - r, r, M_PI / 2, M_PI);
+      cr->close_path();
+      cr->fill();
+    }
+    cr->restore();
+    
     // Draw rounded rectangle background
     cr->save();
     cr->set_source_rgba(30.0/255.0, 30.0/255.0, 46.0/255.0, 0.95);
     
-    // Top-left corner
-    cr->arc(radius, radius, radius, M_PI, 3 * M_PI / 2);
-    // Top-right corner
-    cr->arc(width - radius, radius, radius, 3 * M_PI / 2, 2 * M_PI);
-    // Bottom-right corner
-    cr->arc(width - radius, height - radius, radius, 0, M_PI / 2);
-    // Bottom-left corner
-    cr->arc(radius, height - radius, radius, M_PI / 2, M_PI);
+    cr->arc(content_x + radius, content_y + radius, radius, M_PI, 3 * M_PI / 2);
+    cr->arc(content_x + content_width - radius, content_y + radius, radius, 3 * M_PI / 2, 2 * M_PI);
+    cr->arc(content_x + content_width - radius, content_y + content_height - radius, radius, 0, M_PI / 2);
+    cr->arc(content_x + radius, content_y + content_height - radius, radius, M_PI / 2, M_PI);
     cr->close_path();
     
-    cr->fill_preserve();
-    
-    // Draw border
-    cr->set_source_rgba(137.0/255.0, 180.0/255.0, 250.0/255.0, 0.6);
-    cr->set_line_width(2.0);
-    cr->stroke();
-    
+    cr->fill();
     cr->restore();
     
-    return false; // Propagate event to children
+    // Draw border - make it more visible and on top
+    cr->save();
+    cr->set_source_rgb(137.0/255.0, 180.0/255.0, 250.0/255.0);
+    cr->set_line_width(border_width);
+    cr->set_line_cap(Cairo::LINE_CAP_ROUND);
+    cr->set_line_join(Cairo::LINE_JOIN_ROUND);
+    
+    // Draw border on the outer edge of the content area (no inset)
+    cr->arc(content_x + radius, content_y + radius, radius, M_PI, 3 * M_PI / 2);
+    cr->arc(content_x + content_width - radius, content_y + radius, radius, 3 * M_PI / 2, 2 * M_PI);
+    cr->arc(content_x + content_width - radius, content_y + content_height - radius, radius, 0, M_PI / 2);
+    cr->arc(content_x + radius, content_y + content_height - radius, radius, M_PI / 2, M_PI);
+    cr->close_path();
+    
+    cr->stroke();
+    cr->restore();
+    
+    return false;
   }, false);
   
-  // Setup content box with minimal margins for border
-  m_contentBox.set_margin_top(4);
-  m_contentBox.set_margin_bottom(4);
-  m_contentBox.set_margin_start(4);
-  m_contentBox.set_margin_end(4);
+  // Setup content box with minimal margins - just enough for shadow
+  m_contentBox.set_margin_top(3);    // Just the shadow space
+  m_contentBox.set_margin_bottom(3);
+  m_contentBox.set_margin_start(3);
+  m_contentBox.set_margin_end(3);
   
   // Add thumbnails box (no title label)
   m_thumbnailsBox.set_homogeneous(false);
@@ -208,6 +252,13 @@ void PreviewWindow::showPreview(int workspace_id, const std::string& workspace_n
     return;
   }
   
+  // Only show preview if screenshot is already cached - avoids lag
+  if (s_screenshotCache.find(workspace_id) == s_screenshotCache.end()) {
+    spdlog::debug("[PreviewWindow] No cached screenshot for workspace {}, skipping preview", workspace_id);
+    hidePreview();
+    return;
+  }
+  
   // Force hide first to ensure clean state
   if (m_isVisible) {
     m_window.hide();
@@ -225,15 +276,9 @@ void PreviewWindow::showPreview(int workspace_id, const std::string& workspace_n
     m_thumbnailsBox.remove(*child);
   }
   
-  // Try to show cached screenshot first
-  if (s_screenshotCache.find(workspace_id) != s_screenshotCache.end()) {
-    spdlog::debug("[PreviewWindow] Found cached screenshot for workspace {}", workspace_id);
-    showCachedScreenshot(workspace_id);
-  } else {
-    spdlog::debug("[PreviewWindow] No cached screenshot for workspace {}, showing placeholder", workspace_id);
-    // Show placeholder immediately without querying hyprctl (which can be slow)
-    createPlaceholderContent(workspace_id, workspace_name);
-  }
+  // Show cached screenshot
+  spdlog::debug("[PreviewWindow] Found cached screenshot for workspace {}", workspace_id);
+  showCachedScreenshot(workspace_id);
   
   // Only show_all if window wasn't already visible (avoids re-rendering)
   if (!wasVisible) {
@@ -278,12 +323,60 @@ void PreviewWindow::showCachedScreenshot(int workspace_id) {
     scaled_width, scaled_height, Gdk::INTERP_BILINEAR
   );
   
-  auto image = Gtk::manage(new Gtk::Image(scaled_pixbuf));
+  // Create a rounded version of the pixbuf
+  auto rounded_pixbuf = Gdk::Pixbuf::create(
+    Gdk::COLORSPACE_RGB, true, 8, scaled_width, scaled_height
+  );
+  
+  // Use Cairo to draw the pixbuf with rounded corners
+  auto surface = Cairo::ImageSurface::create(
+    Cairo::FORMAT_ARGB32, scaled_width, scaled_height
+  );
+  auto cr = Cairo::Context::create(surface);
+  
+  // Clear with transparency
+  cr->set_operator(Cairo::OPERATOR_CLEAR);
+  cr->paint();
+  cr->set_operator(Cairo::OPERATOR_OVER);
+  
+  // Create rounded rectangle clip path
+  double radius = 4.0;  // Slightly smaller radius for the screenshot
+  cr->arc(radius, radius, radius, M_PI, 3 * M_PI / 2);
+  cr->arc(scaled_width - radius, radius, radius, 3 * M_PI / 2, 2 * M_PI);
+  cr->arc(scaled_width - radius, scaled_height - radius, radius, 0, M_PI / 2);
+  cr->arc(radius, scaled_height - radius, radius, M_PI / 2, M_PI);
+  cr->close_path();
+  cr->clip();
+  
+  // Draw the pixbuf
+  Gdk::Cairo::set_source_pixbuf(cr, scaled_pixbuf, 0, 0);
+  cr->paint();
+  
+  // Convert surface back to pixbuf
+  unsigned char* data = surface->get_data();
+  int stride = surface->get_stride();
+  
+  for (int y = 0; y < scaled_height; y++) {
+    for (int x = 0; x < scaled_width; x++) {
+      unsigned char* pixel = data + y * stride + x * 4;
+      guchar* out_pixel = rounded_pixbuf->get_pixels() + y * rounded_pixbuf->get_rowstride() + x * 4;
+      
+      // Cairo uses BGRA, Pixbuf uses RGBA
+      out_pixel[0] = pixel[2];  // R
+      out_pixel[1] = pixel[1];  // G
+      out_pixel[2] = pixel[0];  // B
+      out_pixel[3] = pixel[3];  // A
+    }
+  }
+  
+  auto image = Gtk::manage(new Gtk::Image(rounded_pixbuf));
   m_thumbnailsBox.pack_start(*image, false, false);  // Don't expand
   
-  // Resize window to fit screenshot + margins (4px each side) + border (2px each side)
-  int window_width = scaled_width + 12;  // 4px margin + 2px border on each side
-  int window_height = scaled_height + 12;
+  // Resize window to fit screenshot + margins + border + shadow
+  // Shadow extends 3px on all sides, plus 4px margin, plus 2px border
+  int shadow_space = 6;  // 3px shadow on each side  
+  int window_width = scaled_width + 12 + shadow_space;
+  int window_height = scaled_height + 12 + shadow_space;
   m_window.resize(window_width, window_height);
   
   spdlog::debug("[PreviewWindow] Showing cached screenshot for workspace {} ({}x{} -> {}x{})", 
@@ -323,9 +416,10 @@ void PreviewWindow::positionNear(Gtk::Widget& reference_widget) {
                 ref_x, ref_y, ref_width, ref_height);
   
   // With GTK Layer Shell, we set margins from edges
-  // Position very close below the workspace button (2px gap) with 27px left offset
-  int margin_left = ref_x + 27;  // 27px left margin from button position
-  int margin_top = ref_y + ref_height + 2;  // Minimal 2px gap below button
+  // Position between waybar and first window with 20px left offset
+  // Move up significantly to sit higher in the gap
+  int margin_left = ref_x + 20;  // 20px left margin from button position
+  int margin_top = ref_y + ref_height - 25;  // Move up 25px to sit much higher between waybar and windows
   
   // Set margins to position the window
   gtk_layer_set_margin(m_window.gobj(), GTK_LAYER_SHELL_EDGE_LEFT, margin_left);

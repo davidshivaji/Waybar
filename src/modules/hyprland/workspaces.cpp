@@ -106,6 +106,12 @@ void Workspaces::createWorkspace(Json::Value const &workspace_data,
   m_workspaces.emplace_back(std::make_unique<Workspace>(workspace_data, *this, clients_data));
   Gtk::Button &newWorkspaceButton = m_workspaces.back()->button();
   m_box.pack_start(newWorkspaceButton, false, false);
+  
+  // Setup drag and drop for the new workspace
+  if (m_enableDragReorder) {
+    setupWorkspaceDragAndDrop(*m_workspaces.back());
+  }
+  
   sortWorkspaces();
   newWorkspaceButton.show_all();
 }
@@ -652,6 +658,7 @@ auto Workspaces::parseConfig(const Json::Value &config) -> void {
   populateBoolConfig(config, "persistent-only", m_persistentOnly);
   populateBoolConfig(config, "active-only", m_activeOnly);
   populateBoolConfig(config, "move-to-monitor", m_moveToMonitor);
+  populateBoolConfig(config, "enable-drag-reorder", m_enableDragReorder);
 
   m_persistentWorkspaceConfig = config.get("persistent-workspaces", Json::Value());
   populateSortByConfig(config);
@@ -1179,6 +1186,126 @@ std::optional<int> Workspaces::parseWorkspaceId(std::string const &workspaceIdSt
   } catch (std::exception const &e) {
     spdlog::debug("Workspace \"{}\" is not bound to an id: {}", workspaceIdStr, e.what());
     return std::nullopt;
+  }
+}
+
+void Workspaces::setupWorkspaceDragAndDrop(Workspace& workspace) {
+  auto& button = workspace.button();
+  
+  // Set up as drag source
+  std::vector<Gtk::TargetEntry> targets;
+  targets.push_back(Gtk::TargetEntry("WAYBAR_WORKSPACE", Gtk::TARGET_SAME_APP, 0));
+  
+  button.drag_source_set(targets, Gdk::MODIFIER_MASK, Gdk::ACTION_MOVE);
+  
+  // Set up as drag destination
+  button.drag_dest_set(targets, Gtk::DEST_DEFAULT_ALL, Gdk::ACTION_MOVE);
+  
+  // Connect drag signals
+  button.signal_drag_data_get().connect(
+      sigc::bind(sigc::mem_fun(*this, &Workspaces::onDragDataGet), &workspace));
+  
+  button.signal_drag_data_received().connect(
+      sigc::bind(sigc::mem_fun(*this, &Workspaces::onDragDataReceived), &workspace));
+  
+  button.signal_drag_motion().connect(
+      sigc::bind(sigc::mem_fun(*this, &Workspaces::onDragMotion), &workspace));
+  
+  button.signal_drag_leave().connect(
+      sigc::bind(sigc::mem_fun(*this, &Workspaces::onDragLeave), &workspace));
+}
+
+void Workspaces::onDragDataGet(const Glib::RefPtr<Gdk::DragContext>& context,
+                                Gtk::SelectionData& selection_data, guint info, guint time,
+                                Workspace* workspace) {
+  m_draggedWorkspace = workspace;
+  // Send workspace ID as drag data
+  std::string data = std::to_string(workspace->id());
+  selection_data.set("WAYBAR_WORKSPACE", data);
+  spdlog::debug("Drag started for workspace {} (ID: {})", workspace->name(), workspace->id());
+}
+
+void Workspaces::onDragDataReceived(const Glib::RefPtr<Gdk::DragContext>& context, int x, int y,
+                                     const Gtk::SelectionData& selection_data, guint info,
+                                     guint time, Workspace* targetWorkspace) {
+  if (m_draggedWorkspace && m_draggedWorkspace != targetWorkspace) {
+    spdlog::debug("Drop workspace {} (ID: {}) onto {} (ID: {})", 
+                  m_draggedWorkspace->name(), m_draggedWorkspace->id(),
+                  targetWorkspace->name(), targetWorkspace->id());
+    
+    reorderWorkspace(m_draggedWorkspace->id(), targetWorkspace->id());
+    
+    context->drag_finish(true, false, time);
+  } else {
+    context->drag_finish(false, false, time);
+  }
+  
+  m_draggedWorkspace = nullptr;
+}
+
+bool Workspaces::onDragMotion(const Glib::RefPtr<Gdk::DragContext>& context, int x, int y,
+                               guint time, Workspace* workspace) {
+  // Highlight the drop target
+  if (m_draggedWorkspace && m_draggedWorkspace != workspace) {
+    workspace->button().get_style_context()->add_class("drag-hover");
+    context->drag_status(Gdk::ACTION_MOVE, time);
+    return true;
+  }
+  return false;
+}
+
+void Workspaces::onDragLeave(const Glib::RefPtr<Gdk::DragContext>& context, guint time,
+                              Workspace* workspace) {
+  // Remove highlight
+  workspace->button().get_style_context()->remove_class("drag-hover");
+}
+
+void Workspaces::reorderWorkspace(int sourceId, int targetId) {
+  std::lock_guard<std::mutex> lock(m_mutex);
+  
+  // Find source and target workspaces in the vector
+  auto sourceIt = std::ranges::find_if(m_workspaces,
+                                       [sourceId](const auto& ws) { return ws->id() == sourceId; });
+  auto targetIt = std::ranges::find_if(m_workspaces,
+                                       [targetId](const auto& ws) { return ws->id() == targetId; });
+  
+  if (sourceIt == m_workspaces.end() || targetIt == m_workspaces.end()) {
+    spdlog::warn("Could not find source or target workspace for reordering");
+    return;
+  }
+  
+  // Calculate indices
+  size_t sourceIdx = std::distance(m_workspaces.begin(), sourceIt);
+  size_t targetIdx = std::distance(m_workspaces.begin(), targetIt);
+  
+  spdlog::info("Reordering workspace from index {} to {}", sourceIdx, targetIdx);
+  
+  // Move the workspace in the vector
+  if (sourceIdx < targetIdx) {
+    std::rotate(m_workspaces.begin() + sourceIdx, 
+                m_workspaces.begin() + sourceIdx + 1,
+                m_workspaces.begin() + targetIdx + 1);
+  } else {
+    std::rotate(m_workspaces.begin() + targetIdx,
+                m_workspaces.begin() + sourceIdx,
+                m_workspaces.begin() + sourceIdx + 1);
+  }
+  
+  // Reorder in the UI
+  for (size_t i = 0; i < m_workspaces.size(); ++i) {
+    m_box.reorder_child(m_workspaces[i]->button(), i);
+  }
+  
+  // Move workspace in Hyprland
+  try {
+    std::string sourceWorkspace = sourceId > 0 ? std::to_string(sourceId) : (*sourceIt)->name();
+    std::string targetWorkspace = targetId > 0 ? std::to_string(targetId) : (*targetIt)->name();
+    
+    // Use Hyprland's movetoworkspace command to shift windows
+    // Note: This is a visual reorder only; Hyprland doesn't have a direct "reorder workspace" command
+    spdlog::info("Workspaces reordered in Waybar UI (Hyprland workspace IDs remain unchanged)");
+  } catch (const std::exception& e) {
+    spdlog::error("Error during workspace reorder: {}", e.what());
   }
 }
 

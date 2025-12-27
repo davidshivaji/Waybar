@@ -130,6 +130,13 @@ This setting is ignored if *workspace-taskbar.enable* is set to true.
 	Otherwise, the workspace will open on the monitor where it was previously assigned.
 	Analog to using `focusworkspaceoncurrentmonitor` dispatcher instead of `workspace` in Hyprland.
 
+*enable-drag-reorder*: ++
+	typeof: bool ++
+	default: true ++
+	If set to true, workspaces can be reordered by dragging and dropping them in the waybar.
+	The visual order will persist until Hyprland is restarted or workspaces are recreated.
+	Note: This only changes the visual order in waybar, not the workspace IDs in Hyprland.
+
 *ignore-workspaces*: ++
 	typeof: array ++
 	default: [] ++

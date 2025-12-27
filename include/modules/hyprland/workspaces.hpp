@@ -116,6 +116,20 @@ class Workspaces : public AModule, public EventHandler {
 
   int windowRewritePriorityFunction(std::string const& window_rule);
 
+  // Drag and drop methods
+  void setupWorkspaceDragAndDrop(Workspace& workspace);
+  void onDragDataGet(const Glib::RefPtr<Gdk::DragContext>& context,
+                     Gtk::SelectionData& selection_data, guint info, guint time,
+                     Workspace* workspace);
+  void onDragDataReceived(const Glib::RefPtr<Gdk::DragContext>& context, int x, int y,
+                          const Gtk::SelectionData& selection_data, guint info, guint time,
+                          Workspace* workspace);
+  bool onDragMotion(const Glib::RefPtr<Gdk::DragContext>& context, int x, int y, guint time,
+                    Workspace* workspace);
+  void onDragLeave(const Glib::RefPtr<Gdk::DragContext>& context, guint time,
+                   Workspace* workspace);
+  void reorderWorkspace(int sourceId, int targetId);
+
   // event payload management
   template <typename... Args>
   static std::string makePayload(Args const&... args);
@@ -200,6 +214,10 @@ class Workspaces : public AModule, public EventHandler {
 
   std::vector<std::regex> m_ignoreWorkspaces;
   std::vector<std::regex> m_ignoreWindows;
+
+  // Drag and drop state
+  Workspace* m_draggedWorkspace = nullptr;
+  bool m_enableDragReorder = true;
 
   std::mutex m_mutex;
   const Bar& m_bar;

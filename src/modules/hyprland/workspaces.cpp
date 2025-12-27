@@ -9,6 +9,7 @@
 #include <string>
 #include <utility>
 
+#include "modules/hyprland/preview_window.hpp"
 #include "util/regex_collection.hpp"
 #include "util/string.hpp"
 
@@ -31,6 +32,9 @@ Workspaces::Workspaces(const std::string &id, const Bar &bar, const Json::Value 
   setCurrentMonitorId();
   init();
   registerIpc();
+  
+  // Start periodic background screenshot caching
+  PreviewWindow::startPeriodicCaching();
 }
 
 Workspaces::~Workspaces() {
@@ -359,7 +363,24 @@ void Workspaces::onWorkspaceActivated(std::string const &payload) {
   const auto [workspaceIdStr, workspaceName] = splitDoublePayload(payload);
   const auto workspaceId = parseWorkspaceId(workspaceIdStr);
   if (workspaceId.has_value()) {
+    // Signal transition start
+    PreviewWindow::onWorkspaceTransitionStart();
+    
     m_activeWorkspaceId = *workspaceId;
+    PreviewWindow::s_currentActiveWorkspace = *workspaceId;
+    
+    // Update whether active workspace has windows (for periodic caching)
+    auto workspace = std::ranges::find_if(m_workspaces, [&](std::unique_ptr<Workspace> const &w) {
+      return w->id() == *workspaceId;
+    });
+    if (workspace != m_workspaces.end()) {
+      PreviewWindow::s_activeWorkspaceHasWindows = ((*workspace)->windows() > 0);
+    } else {
+      PreviewWindow::s_activeWorkspaceHasWindows = false;
+    }
+    
+    // Signal transition end (will auto-delay to let animation finish)
+    PreviewWindow::onWorkspaceTransitionEnd();
   }
 }
 
@@ -1012,6 +1033,12 @@ auto Workspaces::update() -> void {
 
 void Workspaces::updateWindowCount() {
   const Json::Value workspacesJson = m_ipc.getSocket1JsonReply("workspaces");
+  
+  // Track if active workspace window count changed
+  int activeWorkspaceId = PreviewWindow::s_currentActiveWorkspace;
+  uint32_t activeWindowCount = 0;
+  bool foundActiveWorkspace = false;
+  
   for (auto const &workspace : m_workspaces) {
     auto workspaceJson = std::ranges::find_if(workspacesJson, [&](Json::Value const &x) {
       return x["name"].asString() == workspace->name() ||
@@ -1026,7 +1053,16 @@ void Workspaces::updateWindowCount() {
       }
     }
     workspace->setWindows(count);
+    
+    // Track active workspace count
+    if (workspace->id() == activeWorkspaceId) {
+      activeWindowCount = count;
+      foundActiveWorkspace = true;
+    }
   }
+  
+  // Update s_activeWorkspaceHasWindows flag efficiently using data we already have
+  PreviewWindow::s_activeWorkspaceHasWindows = foundActiveWorkspace && (activeWindowCount > 0);
 }
 
 bool Workspaces::updateWindowsToCreate() {

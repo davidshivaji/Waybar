@@ -18,6 +18,7 @@
 #include "bar.hpp"
 #include "modules/hyprland/backend.hpp"
 #include "modules/hyprland/windowcreationpayload.hpp"
+#include "modules/hyprland/preview_window.hpp"
 #include "util/enum.hpp"
 #include "util/regex_collection.hpp"
 
@@ -26,6 +27,7 @@ using WindowAddress = std::string;
 namespace waybar::modules::hyprland {
 
 class Workspaces;
+class PreviewWindow;
 class Workspace {
  public:
   explicit Workspace(const Json::Value& workspace_data, Workspaces& workspace_manager,
@@ -43,6 +45,7 @@ class Workspace {
   bool isPersistentRule() const { return m_isPersistentRule; };
   bool isVisible() const { return m_isVisible; };
   bool isUrgent() const { return m_isUrgent; };
+  uint windows() const { return m_windows; };
 
   bool handleClicked(GdkEventButton* bt) const;
   void setActive(bool value = true) { m_isActive = value; };
@@ -65,6 +68,10 @@ class Workspace {
   std::optional<WindowRepr> closeWindow(WindowAddress const& addr);
 
   void update(const std::string& workspace_icon);
+
+  // Hover event handlers for preview feature
+  bool onMouseEnter(GdkEventCrossing* event);
+  bool onMouseLeave(GdkEventCrossing* event);
 
  private:
   Workspaces& m_workspaceManager;
@@ -92,6 +99,9 @@ class Workspace {
   bool handleClick(const GdkEventButton* event_button, WindowAddress const& addr) const;
   bool shouldSkipWindow(const WindowRepr& window_repr) const;
   IPC& m_ipc;
+  
+  // Shared preview window for all workspaces
+  static std::shared_ptr<PreviewWindow> s_previewWindow;
 };
 
 }  // namespace waybar::modules::hyprland

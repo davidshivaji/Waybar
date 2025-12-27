@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "modules/hyprland/workspaces.hpp"
+#include "modules/hyprland/preview_window.hpp"
 #include "util/command.hpp"
 #include "util/icon_loader.hpp"
 
@@ -33,6 +34,13 @@ Workspace::Workspace(const Json::Value &workspace_data, Workspaces &workspace_ma
   m_button.signal_button_press_event().connect(sigc::mem_fun(*this, &Workspace::handleClicked),
                                                false);
 
+  // Add hover events for preview feature
+  m_button.add_events(Gdk::ENTER_NOTIFY_MASK | Gdk::LEAVE_NOTIFY_MASK);
+  m_button.signal_enter_notify_event().connect(sigc::mem_fun(*this, &Workspace::onMouseEnter),
+                                               false);
+  m_button.signal_leave_notify_event().connect(sigc::mem_fun(*this, &Workspace::onMouseLeave),
+                                               false);
+
   m_button.set_relief(Gtk::RELIEF_NONE);
   if (m_workspaceManager.enableTaskbar()) {
     m_content.set_orientation(m_workspaceManager.taskbarOrientation());
@@ -43,6 +51,8 @@ Workspace::Workspace(const Json::Value &workspace_data, Workspaces &workspace_ma
   m_button.add(m_content);
 
   initializeWindowMap(clients_data);
+  
+  // Preview window will be lazily created on first hover (in onMouseEnter)
 }
 
 void addOrRemoveClass(const Glib::RefPtr<Gtk::StyleContext> &context, bool condition,
@@ -379,6 +389,42 @@ bool Workspace::shouldSkipWindow(const WindowRepr &window_repr) const {
            std::regex_match(window_repr.window_title, ignoreItem);
   });
   return it != ignore_list.end();
+}
+
+bool Workspace::onMouseEnter(GdkEventCrossing* event) {
+  spdlog::info("[Workspace] Mouse entered workspace {} (id: {})", m_name, m_id);
+  
+  // Only show preview for non-active workspaces
+  if (!m_isActive) {
+    // Lazy initialization: create preview window on first use
+    if (!m_previewWindow) {
+      try {
+        spdlog::info("[Workspace] Creating preview window for workspace {} ({})", m_id, m_name);
+        m_previewWindow = std::make_shared<PreviewWindow>();
+      } catch (const std::exception& e) {
+        spdlog::error("[Workspace] Failed to create preview window: {}", e.what());
+        return false;
+      }
+    }
+    
+    spdlog::info("[Workspace] Showing preview for workspace {}", m_id);
+    m_previewWindow->showPreview(m_id, m_name);
+    m_previewWindow->positionNear(m_button);
+  } else {
+    spdlog::debug("[Workspace] Skipping preview (workspace is active)");
+  }
+  
+  return false;  // Allow event to propagate
+}
+
+bool Workspace::onMouseLeave(GdkEventCrossing* event) {
+  spdlog::info("[Workspace] Mouse left workspace {} (id: {})", m_name, m_id);
+  
+  if (m_previewWindow) {
+    m_previewWindow->hidePreview();
+  }
+  
+  return false;  // Allow event to propagate
 }
 
 }  // namespace waybar::modules::hyprland

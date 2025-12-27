@@ -9,6 +9,7 @@
 #include <string>
 #include <utility>
 
+#include "modules/hyprland/preview_window.hpp"
 #include "util/regex_collection.hpp"
 #include "util/string.hpp"
 
@@ -31,6 +32,9 @@ Workspaces::Workspaces(const std::string &id, const Bar &bar, const Json::Value 
   setCurrentMonitorId();
   init();
   registerIpc();
+  
+  // Start periodic background screenshot caching
+  PreviewWindow::startPeriodicCaching();
 }
 
 Workspaces::~Workspaces() {
@@ -359,7 +363,14 @@ void Workspaces::onWorkspaceActivated(std::string const &payload) {
   const auto [workspaceIdStr, workspaceName] = splitDoublePayload(payload);
   const auto workspaceId = parseWorkspaceId(workspaceIdStr);
   if (workspaceId.has_value()) {
+    // Signal transition start
+    PreviewWindow::onWorkspaceTransitionStart();
+    
     m_activeWorkspaceId = *workspaceId;
+    PreviewWindow::s_currentActiveWorkspace = *workspaceId;
+    
+    // Signal transition end (will auto-delay to let animation finish)
+    PreviewWindow::onWorkspaceTransitionEnd();
   }
 }
 

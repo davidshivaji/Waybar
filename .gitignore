@@ -50,3 +50,5 @@ result
 result-*
 
 .ccls-cache
+
+.github/copilot-instructions.md

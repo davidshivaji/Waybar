@@ -323,6 +323,7 @@ if true
         'src/modules/hyprland/workspace.cpp',
         'src/modules/hyprland/workspaces.cpp',
         'src/modules/hyprland/windowcreationpayload.cpp',
+        'src/modules/hyprland/preview_window.cpp',
     )
     man_files += files(
         'man/waybar-hyprland-language.5.scd',

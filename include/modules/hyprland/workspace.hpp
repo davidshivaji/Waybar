@@ -18,6 +18,7 @@
 #include "bar.hpp"
 #include "modules/hyprland/backend.hpp"
 #include "modules/hyprland/windowcreationpayload.hpp"
+#include "modules/hyprland/preview_window.hpp"
 #include "util/enum.hpp"
 #include "util/regex_collection.hpp"
 
@@ -26,6 +27,7 @@ using WindowAddress = std::string;
 namespace waybar::modules::hyprland {
 
 class Workspaces;
+class PreviewWindow;
 class Workspace {
  public:
   explicit Workspace(const Json::Value& workspace_data, Workspaces& workspace_manager,
@@ -66,6 +68,10 @@ class Workspace {
 
   void update(const std::string& workspace_icon);
 
+  // Hover event handlers for preview feature
+  bool onMouseEnter(GdkEventCrossing* event);
+  bool onMouseLeave(GdkEventCrossing* event);
+
  private:
   Workspaces& m_workspaceManager;
 
@@ -92,6 +98,9 @@ class Workspace {
   bool handleClick(const GdkEventButton* event_button, WindowAddress const& addr) const;
   bool shouldSkipWindow(const WindowRepr& window_repr) const;
   IPC& m_ipc;
+  
+  // Preview window for hover previews
+  std::shared_ptr<PreviewWindow> m_previewWindow;
 };
 
 }  // namespace waybar::modules::hyprland

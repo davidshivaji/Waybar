@@ -1033,6 +1033,12 @@ auto Workspaces::update() -> void {
 
 void Workspaces::updateWindowCount() {
   const Json::Value workspacesJson = m_ipc.getSocket1JsonReply("workspaces");
+  
+  // Track if active workspace window count changed
+  int activeWorkspaceId = PreviewWindow::s_currentActiveWorkspace;
+  uint32_t activeWindowCount = 0;
+  bool foundActiveWorkspace = false;
+  
   for (auto const &workspace : m_workspaces) {
     auto workspaceJson = std::ranges::find_if(workspacesJson, [&](Json::Value const &x) {
       return x["name"].asString() == workspace->name() ||
@@ -1047,7 +1053,16 @@ void Workspaces::updateWindowCount() {
       }
     }
     workspace->setWindows(count);
+    
+    // Track active workspace count
+    if (workspace->id() == activeWorkspaceId) {
+      activeWindowCount = count;
+      foundActiveWorkspace = true;
+    }
   }
+  
+  // Update s_activeWorkspaceHasWindows flag efficiently using data we already have
+  PreviewWindow::s_activeWorkspaceHasWindows = foundActiveWorkspace && (activeWindowCount > 0);
 }
 
 bool Workspaces::updateWindowsToCreate() {

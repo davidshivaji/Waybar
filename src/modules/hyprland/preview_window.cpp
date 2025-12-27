@@ -34,38 +34,34 @@ PreviewWindow::~PreviewWindow() {
 }
 
 void PreviewWindow::cacheWorkspaceScreenshot(int workspace_id) {
-  auto start_time = std::chrono::high_resolution_clock::now();
-  
   std::string temp_path = "/tmp/waybar_workspace_" + std::to_string(workspace_id) + ".png";
   std::string temp_write_path = temp_path + ".tmp";
-  std::string cmd = "grim " + temp_write_path + " 2>/dev/null && mv " + temp_write_path + " " + temp_path;
+  std::string cmd = "grim " + temp_write_path + " 2>/dev/null && mv " + temp_write_path + " " + temp_path + " &";
   
   spdlog::debug("[PreviewWindow] Taking screenshot for workspace {}", workspace_id);
   
-  // Run synchronously - grim is fast enough
-  int result = system(cmd.c_str());
+  // Run in background (non-blocking)
+  system(cmd.c_str());
   
-  if (result == 0) {
-    WorkspaceScreenshot screenshot;
-    screenshot.workspace_id = workspace_id;
-    screenshot.screenshot_path = temp_path;
-    screenshot.timestamp = time(nullptr);
-    
+  // Schedule loading the screenshot after a short delay
+  Glib::signal_timeout().connect_once([workspace_id, temp_path]() {
     try {
-      screenshot.pixbuf = Gdk::Pixbuf::create_from_file(temp_path);
+      auto pixbuf = Gdk::Pixbuf::create_from_file(temp_path);
+      
+      WorkspaceScreenshot screenshot;
+      screenshot.workspace_id = workspace_id;
+      screenshot.screenshot_path = temp_path;
+      screenshot.timestamp = time(nullptr);
+      screenshot.pixbuf = pixbuf;
+      
       s_screenshotCache[workspace_id] = screenshot;
       
-      auto end_time = std::chrono::high_resolution_clock::now();
-      auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
-      
-      spdlog::info("[PreviewWindow] Cached screenshot for workspace {} ({}x{}) in {}ms", 
-                   workspace_id, screenshot.pixbuf->get_width(), screenshot.pixbuf->get_height(), duration.count());
+      spdlog::debug("[PreviewWindow] Cached screenshot for workspace {} ({}x{})", 
+                   workspace_id, pixbuf->get_width(), pixbuf->get_height());
     } catch (const Glib::Error& e) {
-      spdlog::warn("[PreviewWindow] Failed to load screenshot: {}", e.what().c_str());
+      spdlog::debug("[PreviewWindow] Screenshot not ready yet for workspace {}", workspace_id);
     }
-  } else {
-    spdlog::warn("[PreviewWindow] grim failed for workspace {}", workspace_id);
-  }
+  }, 200);  // Wait 200ms for grim to finish
 }
 
 void PreviewWindow::startPeriodicCaching() {

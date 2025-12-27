@@ -4,6 +4,7 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <chrono>
 
 #include "modules/hyprland/workspaces.hpp"
 #include "modules/hyprland/preview_window.hpp"
@@ -11,6 +12,9 @@
 #include "util/icon_loader.hpp"
 
 namespace waybar::modules::hyprland {
+
+// Initialize static shared preview window
+std::shared_ptr<PreviewWindow> Workspace::s_previewWindow;
 
 Workspace::Workspace(const Json::Value &workspace_data, Workspaces &workspace_manager,
                      const Json::Value &clients_data)
@@ -392,27 +396,54 @@ bool Workspace::shouldSkipWindow(const WindowRepr &window_repr) const {
 }
 
 bool Workspace::onMouseEnter(GdkEventCrossing* event) {
+  auto start = std::chrono::high_resolution_clock::now();
   spdlog::info("[Workspace] Mouse entered workspace {} (id: {})", m_name, m_id);
   
-  // Only show preview for non-active workspaces
-  if (!m_isActive) {
-    // Lazy initialization: create preview window on first use
-    if (!m_previewWindow) {
-      try {
-        spdlog::info("[Workspace] Creating preview window for workspace {} ({})", m_id, m_name);
-        m_previewWindow = std::make_shared<PreviewWindow>();
-      } catch (const std::exception& e) {
-        spdlog::error("[Workspace] Failed to create preview window: {}", e.what());
-        return false;
-      }
+  // Skip preview for active workspace
+  if (m_isActive) {
+    if (s_previewWindow) {
+      s_previewWindow->hidePreview();
     }
-    
-    spdlog::info("[Workspace] Showing preview for workspace {}", m_id);
-    m_previewWindow->showPreview(m_id, m_name);
-    m_previewWindow->positionNear(m_button);
-  } else {
     spdlog::debug("[Workspace] Skipping preview (workspace is active)");
+    return false;
   }
+  
+  // Skip preview for empty workspaces (no windows)
+  if (m_windows == 0) {
+    if (s_previewWindow) {
+      s_previewWindow->hidePreview();
+    }
+    spdlog::debug("[Workspace] Skipping preview (workspace is empty)");
+    return false;
+  }
+  
+  auto after_check = std::chrono::high_resolution_clock::now();
+  spdlog::info("[Workspace] Check took {}ms", std::chrono::duration_cast<std::chrono::milliseconds>(after_check - start).count());
+  
+  // Lazy initialization of shared preview window (once for all workspaces)
+  if (!s_previewWindow) {
+    try {
+      spdlog::info("[Workspace] Creating shared preview window");
+      s_previewWindow = std::make_shared<PreviewWindow>();
+    } catch (const std::exception& e) {
+      spdlog::error("[Workspace] Failed to create preview window: {}", e.what());
+      return false;
+    }
+  }
+  
+  auto after_init = std::chrono::high_resolution_clock::now();
+  spdlog::info("[Workspace] Init took {}ms", std::chrono::duration_cast<std::chrono::milliseconds>(after_init - after_check).count());
+  
+  spdlog::info("[Workspace] Showing preview for workspace {}", m_id);
+  s_previewWindow->showPreview(m_id, m_name);
+  
+  auto after_show = std::chrono::high_resolution_clock::now();
+  spdlog::info("[Workspace] showPreview took {}ms", std::chrono::duration_cast<std::chrono::milliseconds>(after_show - after_init).count());
+  
+  s_previewWindow->positionNear(m_button);
+  
+  auto end = std::chrono::high_resolution_clock::now();
+  spdlog::info("[Workspace] Total onMouseEnter took {}ms", std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count());
   
   return false;  // Allow event to propagate
 }
@@ -420,8 +451,8 @@ bool Workspace::onMouseEnter(GdkEventCrossing* event) {
 bool Workspace::onMouseLeave(GdkEventCrossing* event) {
   spdlog::info("[Workspace] Mouse left workspace {} (id: {})", m_name, m_id);
   
-  if (m_previewWindow) {
-    m_previewWindow->hidePreview();
+  if (s_previewWindow) {
+    s_previewWindow->hidePreview();
   }
   
   return false;  // Allow event to propagate

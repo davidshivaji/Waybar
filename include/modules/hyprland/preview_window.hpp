@@ -50,6 +50,7 @@ class PreviewWindow {
   
   // Track current active workspace
   static int s_currentActiveWorkspace;
+  static bool s_activeWorkspaceHasWindows;
   static bool s_inTransition;
   
   // Show preview for a workspace

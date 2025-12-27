@@ -369,6 +369,16 @@ void Workspaces::onWorkspaceActivated(std::string const &payload) {
     m_activeWorkspaceId = *workspaceId;
     PreviewWindow::s_currentActiveWorkspace = *workspaceId;
     
+    // Update whether active workspace has windows (for periodic caching)
+    auto workspace = std::ranges::find_if(m_workspaces, [&](std::unique_ptr<Workspace> const &w) {
+      return w->id() == *workspaceId;
+    });
+    if (workspace != m_workspaces.end()) {
+      PreviewWindow::s_activeWorkspaceHasWindows = ((*workspace)->windows() > 0);
+    } else {
+      PreviewWindow::s_activeWorkspaceHasWindows = false;
+    }
+    
     // Signal transition end (will auto-delay to let animation finish)
     PreviewWindow::onWorkspaceTransitionEnd();
   }

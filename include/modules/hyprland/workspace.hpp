@@ -45,6 +45,7 @@ class Workspace {
   bool isPersistentRule() const { return m_isPersistentRule; };
   bool isVisible() const { return m_isVisible; };
   bool isUrgent() const { return m_isUrgent; };
+  uint windows() const { return m_windows; };
 
   bool handleClicked(GdkEventButton* bt) const;
   void setActive(bool value = true) { m_isActive = value; };
@@ -99,8 +100,8 @@ class Workspace {
   bool shouldSkipWindow(const WindowRepr& window_repr) const;
   IPC& m_ipc;
   
-  // Preview window for hover previews
-  std::shared_ptr<PreviewWindow> m_previewWindow;
+  // Shared preview window for all workspaces
+  static std::shared_ptr<PreviewWindow> s_previewWindow;
 };
 
 }  // namespace waybar::modules::hyprland

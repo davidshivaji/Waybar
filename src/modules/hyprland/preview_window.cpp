@@ -9,6 +9,7 @@
 #include <cmath>
 #include <ctime>
 #include <chrono>
+#include <cstdio>
 
 namespace waybar::modules::hyprland {
 
@@ -16,6 +17,7 @@ namespace waybar::modules::hyprland {
 std::map<int, WorkspaceScreenshot> PreviewWindow::s_screenshotCache;
 sigc::connection PreviewWindow::s_periodicCacheTimer;
 int PreviewWindow::s_currentActiveWorkspace = 1;
+bool PreviewWindow::s_activeWorkspaceHasWindows = false;
 bool PreviewWindow::s_inTransition = false;
 
 PreviewWindow::PreviewWindow() 
@@ -67,11 +69,12 @@ void PreviewWindow::cacheWorkspaceScreenshot(int workspace_id) {
 
 void PreviewWindow::startPeriodicCaching() {
   // Cache current workspace more frequently for fresher previews
-  // Modern systems can handle grim quite efficiently
+  // Only cache workspaces with windows (checked at hover time)
   s_periodicCacheTimer = Glib::signal_timeout().connect(
     []() -> bool {
       // Don't cache during transitions to avoid capturing mid-animation
-      if (s_currentActiveWorkspace > 0 && !s_inTransition) {
+      // Don't cache empty workspaces (they take 665ms vs 175ms for full ones)
+      if (s_currentActiveWorkspace > 0 && !s_inTransition && s_activeWorkspaceHasWindows) {
         cacheWorkspaceScreenshot(s_currentActiveWorkspace);
       }
       return true;  // Keep timer running
@@ -183,12 +186,19 @@ void PreviewWindow::showPreview(int workspace_id, const std::string& workspace_n
     return;
   }
   
+  // Force hide first to ensure clean state
+  if (m_isVisible) {
+    m_window.hide();
+    m_isVisible = false;
+  }
+  
   spdlog::debug("[PreviewWindow] Showing preview for workspace {} ({})", workspace_id, workspace_name);
   
+  bool wasVisible = m_isVisible;
   m_currentWorkspaceId = workspace_id;
   m_titleLabel.set_text("Workspace: " + workspace_name);
   
-  // Clear existing thumbnails
+  // Clear existing thumbnails efficiently
   auto children = m_thumbnailsBox.get_children();
   for (auto child : children) {
     m_thumbnailsBox.remove(*child);
@@ -196,26 +206,27 @@ void PreviewWindow::showPreview(int workspace_id, const std::string& workspace_n
   
   // Try to show cached screenshot first
   if (s_screenshotCache.find(workspace_id) != s_screenshotCache.end()) {
-    spdlog::info("[PreviewWindow] Found cached screenshot for workspace {}", workspace_id);
+    spdlog::debug("[PreviewWindow] Found cached screenshot for workspace {}", workspace_id);
     showCachedScreenshot(workspace_id);
   } else {
-    spdlog::info("[PreviewWindow] No cached screenshot for workspace {}, using styled view", workspace_id);
-    // Fall back to window-by-window view
-    captureWorkspaceThumbnails(workspace_id);
-    
-    // If no windows, show placeholder
-    if (m_thumbnailsBox.get_children().empty()) {
-      createPlaceholderContent(workspace_id, workspace_name);
-    }
+    spdlog::debug("[PreviewWindow] No cached screenshot for workspace {}, showing placeholder", workspace_id);
+    // Show placeholder immediately without querying hyprctl (which can be slow)
+    createPlaceholderContent(workspace_id, workspace_name);
   }
   
-  m_window.show_all();
+  // Only show_all if window wasn't already visible (avoids re-rendering)
+  if (!wasVisible) {
+    m_window.show_all();
+    // Pause periodic caching while preview is visible
+    pausePeriodicCaching();
+  } else {
+    // Just show new children without full window re-render
+    m_thumbnailsBox.show_all();
+  }
+  
   m_isVisible = true;
   
-  // Pause periodic caching while preview is visible
-  pausePeriodicCaching();
-  
-  spdlog::info("[PreviewWindow] Preview window shown at workspace {}", workspace_id);
+  spdlog::debug("[PreviewWindow] Preview window shown at workspace {}", workspace_id);
 }
 
 void PreviewWindow::showCachedScreenshot(int workspace_id) {

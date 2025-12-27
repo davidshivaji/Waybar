@@ -34,8 +34,8 @@ Workspace::Workspace(const Json::Value &workspace_data, Workspaces &workspace_ma
     m_isSpecial = true;
   }
 
-  m_button.add_events(Gdk::BUTTON_PRESS_MASK);
-  m_button.signal_button_press_event().connect(sigc::mem_fun(*this, &Workspace::handleClicked),
+  m_button.add_events(Gdk::BUTTON_PRESS_MASK | Gdk::BUTTON_RELEASE_MASK);
+  m_button.signal_button_release_event().connect(sigc::mem_fun(*this, &Workspace::handleClicked),
                                                false);
 
   // Add hover events for preview feature
@@ -81,7 +81,7 @@ std::optional<WindowRepr> Workspace::closeWindow(WindowAddress const &addr) {
 }
 
 bool Workspace::handleClicked(GdkEventButton *bt) const {
-  if (bt->type == GDK_BUTTON_PRESS) {
+  if (bt->type == GDK_BUTTON_RELEASE && bt->button == 1) {
     try {
       if (id() > 0) {  // normal
         if (m_workspaceManager.moveToMonitor()) {

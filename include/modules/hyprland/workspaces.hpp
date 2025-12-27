@@ -118,17 +118,21 @@ class Workspaces : public AModule, public EventHandler {
 
   // Drag and drop methods
   void setupWorkspaceDragAndDrop(Workspace& workspace);
+  void onDragBegin(const Glib::RefPtr<Gdk::DragContext>& context, Workspace* workspace);
   void onDragDataGet(const Glib::RefPtr<Gdk::DragContext>& context,
                      Gtk::SelectionData& selection_data, guint info, guint time,
                      Workspace* workspace);
   void onDragDataReceived(const Glib::RefPtr<Gdk::DragContext>& context, int x, int y,
                           const Gtk::SelectionData& selection_data, guint info, guint time,
                           Workspace* workspace);
+  void onDragEnd(const Glib::RefPtr<Gdk::DragContext>& context, Workspace* workspace);
   bool onDragMotion(const Glib::RefPtr<Gdk::DragContext>& context, int x, int y, guint time,
                     Workspace* workspace);
   void onDragLeave(const Glib::RefPtr<Gdk::DragContext>& context, guint time,
                    Workspace* workspace);
-  void reorderWorkspace(int sourceId, int targetId);
+  void reorderWorkspaceAndContents(int sourceId, int targetId);
+  void moveAllWindowsToWorkspace(int fromWorkspaceId, int toWorkspaceId);
+  int findInsertPosition(int x, int y);
 
   // event payload management
   template <typename... Args>
@@ -217,7 +221,9 @@ class Workspaces : public AModule, public EventHandler {
 
   // Drag and drop state
   Workspace* m_draggedWorkspace = nullptr;
+  Workspace* m_dropTargetWorkspace = nullptr;
   bool m_enableDragReorder = true;
+  Gtk::Window* m_dragIcon = nullptr;
 
   std::mutex m_mutex;
   const Bar& m_bar;

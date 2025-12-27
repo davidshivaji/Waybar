@@ -136,46 +136,68 @@ void PreviewWindow::setupWindow() {
   m_window.set_decorated(false);
   m_window.set_resizable(false);
   
-  // Setup content box
-  m_contentBox.set_margin_top(10);
-  m_contentBox.set_margin_bottom(10);
-  m_contentBox.set_margin_start(10);
-  m_contentBox.set_margin_end(10);
+  // Enable transparency for proper rounded corners (GTK3 approach)
+  auto screen = m_window.get_screen();
+  auto visual = screen->get_rgba_visual();
+  if (visual) {
+    gtk_widget_set_visual(GTK_WIDGET(m_window.gobj()), visual->gobj());
+  }
+  m_window.set_app_paintable(true);
   
-  // Add title label
-  m_titleLabel.set_text("Workspace Preview");
-  m_titleLabel.get_style_context()->add_class("preview-title");
-  m_contentBox.pack_start(m_titleLabel, false, false);
+  // Connect draw signal to manually paint rounded background
+  m_window.signal_draw().connect([this](const Cairo::RefPtr<Cairo::Context>& cr) {
+    auto allocation = m_window.get_allocation();
+    double width = allocation.get_width();
+    double height = allocation.get_height();
+    double radius = 10.0;  // Match Hyprland's standard window rounding
+    
+    // Clear the surface
+    cr->save();
+    cr->set_operator(Cairo::OPERATOR_CLEAR);
+    cr->paint();
+    cr->restore();
+    
+    // Draw rounded rectangle background
+    cr->save();
+    cr->set_source_rgba(30.0/255.0, 30.0/255.0, 46.0/255.0, 0.95);
+    
+    // Top-left corner
+    cr->arc(radius, radius, radius, M_PI, 3 * M_PI / 2);
+    // Top-right corner
+    cr->arc(width - radius, radius, radius, 3 * M_PI / 2, 2 * M_PI);
+    // Bottom-right corner
+    cr->arc(width - radius, height - radius, radius, 0, M_PI / 2);
+    // Bottom-left corner
+    cr->arc(radius, height - radius, radius, M_PI / 2, M_PI);
+    cr->close_path();
+    
+    cr->fill_preserve();
+    
+    // Draw border
+    cr->set_source_rgba(137.0/255.0, 180.0/255.0, 250.0/255.0, 0.6);
+    cr->set_line_width(2.0);
+    cr->stroke();
+    
+    cr->restore();
+    
+    return false; // Propagate event to children
+  }, false);
   
-  // Add thumbnails box
-  m_thumbnailsBox.set_homogeneous(true);
+  // Setup content box with minimal margins for border
+  m_contentBox.set_margin_top(4);
+  m_contentBox.set_margin_bottom(4);
+  m_contentBox.set_margin_start(4);
+  m_contentBox.set_margin_end(4);
+  
+  // Add thumbnails box (no title label)
+  m_thumbnailsBox.set_homogeneous(false);
   m_thumbnailsBox.get_style_context()->add_class("preview-thumbnails");
-  m_contentBox.pack_start(m_thumbnailsBox, true, true);
+  m_contentBox.pack_start(m_thumbnailsBox, false, false);  // Don't expand
   
   m_window.add(m_contentBox);
   
   // Add CSS class for styling
   m_window.get_style_context()->add_class("workspace-preview");
-  
-  // Add default styling to make window visible
-  auto css_provider = Gtk::CssProvider::create();
-  css_provider->load_from_data(
-    ".workspace-preview { "
-    "  background-color: rgba(30, 30, 30, 0.95); "
-    "  border-radius: 12px; "
-    "  border: 2px solid rgba(80, 80, 80, 0.8); "
-    "} "
-    ".preview-title { "
-    "  color: #ffffff; "
-    "  font-weight: bold; "
-    "  font-size: 14px; "
-    "}"
-  );
-  m_window.get_style_context()->add_provider(css_provider, 
-                                             GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
-  
-  // Set a default size for the preview window
-  m_window.set_default_size(400, 250);
   
   spdlog::debug("[PreviewWindow] Window setup complete with GTK Layer Shell");
 }
@@ -196,7 +218,6 @@ void PreviewWindow::showPreview(int workspace_id, const std::string& workspace_n
   
   bool wasVisible = m_isVisible;
   m_currentWorkspaceId = workspace_id;
-  m_titleLabel.set_text("Workspace: " + workspace_name);
   
   // Clear existing thumbnails efficiently
   auto children = m_thumbnailsBox.get_children();
@@ -237,13 +258,13 @@ void PreviewWindow::showCachedScreenshot(int workspace_id) {
     return;
   }
   
-  // Scale screenshot to fit preview window
+  // Scale screenshot to a reasonable preview size
   int original_width = cached.pixbuf->get_width();
   int original_height = cached.pixbuf->get_height();
   
-  // Target size for preview (keep aspect ratio)
-  int target_width = 360;
-  int target_height = 200;
+  // Target size for preview (keep aspect ratio) - smaller for tighter fit
+  int target_width = 320;
+  int target_height = 180;
   
   double scale = std::min(
     static_cast<double>(target_width) / original_width,
@@ -258,9 +279,15 @@ void PreviewWindow::showCachedScreenshot(int workspace_id) {
   );
   
   auto image = Gtk::manage(new Gtk::Image(scaled_pixbuf));
-  m_thumbnailsBox.pack_start(*image, true, true);
+  m_thumbnailsBox.pack_start(*image, false, false);  // Don't expand
   
-  spdlog::debug("[PreviewWindow] Showing cached screenshot for workspace {}", workspace_id);
+  // Resize window to fit screenshot + margins (4px each side) + border (2px each side)
+  int window_width = scaled_width + 12;  // 4px margin + 2px border on each side
+  int window_height = scaled_height + 12;
+  m_window.resize(window_width, window_height);
+  
+  spdlog::debug("[PreviewWindow] Showing cached screenshot for workspace {} ({}x{} -> {}x{})", 
+                workspace_id, original_width, original_height, scaled_width, scaled_height);
 }
 
 void PreviewWindow::hidePreview() {
@@ -296,9 +323,9 @@ void PreviewWindow::positionNear(Gtk::Widget& reference_widget) {
                 ref_x, ref_y, ref_width, ref_height);
   
   // With GTK Layer Shell, we set margins from edges
-  // Position below the workspace button with appropriate margins
-  int margin_left = ref_x;
-  int margin_top = ref_y + ref_height + 5;  // 5px gap below button
+  // Position very close below the workspace button (2px gap) with 27px left offset
+  int margin_left = ref_x + 27;  // 27px left margin from button position
+  int margin_top = ref_y + ref_height + 2;  // Minimal 2px gap below button
   
   // Set margins to position the window
   gtk_layer_set_margin(m_window.gobj(), GTK_LAYER_SHELL_EDGE_LEFT, margin_left);

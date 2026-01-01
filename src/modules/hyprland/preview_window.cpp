@@ -255,12 +255,6 @@ void PreviewWindow::showPreview(int workspace_id, const std::string& workspace_n
     return;
   }
   
-  // Force hide first to ensure clean state
-  if (m_isVisible) {
-    m_window.hide();
-    m_isVisible = false;
-  }
-  
   spdlog::debug("[PreviewWindow] Showing preview for workspace {} ({})", workspace_id, workspace_name);
   
   bool wasVisible = m_isVisible;
@@ -303,9 +297,9 @@ void PreviewWindow::showCachedScreenshot(int workspace_id) {
   int original_width = cached.pixbuf->get_width();
   int original_height = cached.pixbuf->get_height();
   
-  // Target size for preview (keep aspect ratio) - smaller for tighter fit
-  int target_width = 320;
-  int target_height = 180;
+  // Target size for preview (keep aspect ratio) - 1.5x larger
+  int target_width = 480;
+  int target_height = 270;
   
   double scale = std::min(
     static_cast<double>(target_width) / original_width,
